@@ -16,6 +16,7 @@ from tornado import (
     ioloop,
     httpserver,
     web,
+    websocket,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,22 @@ class BattleHandler(web.RequestHandler):
         self.render('index.html')
 
 
+class WebSocketHandler(websocket.WebSocketHandler):
+    def open(self):
+        logger.info('Websocket opened')
+
+    def on_message(self, message):
+        self.write_message('your message: ' + message)
+
+    def on_close(self):
+        logger.info('Websocket closed')
+
+
 class Application(web.Application):
     def __init__(self):
         handlers = [
             (r'/', BattleHandler),
+            (r'/battle', WebSocketHandler),
         ]
         conf = dict(
             template_path=TEMPLATE_PATH,
@@ -52,6 +65,10 @@ class Application(web.Application):
 class HTTPServer(httpserver.HTTPServer):
     _pids = {}
 
+    def _handle_connection(self, connection, address):
+        logger.info('%s %s' % (connection, address))
+        return super()._handle_connection(connection, address)
+
     def handle_stream(self, stream, address):
         socks = socket.socketpair()
         pid = os.fork()
@@ -64,14 +81,13 @@ class HTTPServer(httpserver.HTTPServer):
         else:
             socks[0].close()
             super().handle_stream(stream, address)
-            socks[1].sendmsg('done'.encode())
+            socks[1].sendmsg(['done'.encode()])
             logger.info('child died')
             os._exit(os.EX_OK)
 
     @gen.coroutine
     def waitpid(self, pid, fd, events):
         logger.info(pid)
-        logger.info(self._pids[fd])
         self.io_loop.remove_handler(fd)
         return os.waitpid(pid, 0)
 
