@@ -30,16 +30,23 @@ class BattleHandler(web.RequestHandler):
     @gen.coroutine
     def get(self):
         self.xsrf_token
-        logger.info('herer')
+        logger.info('entered %s' % self)
         time.sleep(5)
         self.render('index.html')
+        logger.info('exiting %s' % self)
 
 
 class WebSocketHandler(websocket.WebSocketHandler):
     def open(self):
         logger.info('Websocket opened')
+        logger.info(self.request.connection)
+        logger.info(self.stream)
+        logger.info(self.request.headers)
+        logger.info(self.get_cookie('sid'))
 
     def on_message(self, message):
+        logger.info(self.on_message)
+        logger.info(self.stream)
         self.write_message('your message: ' + message)
 
     def on_close(self):
@@ -57,9 +64,15 @@ class Application(web.Application):
             static_path=STATIC_PATH,
             autoescape=True,
             debug=True,
+            autoreload=False,
         )
 
         web.Application.__init__(self, handlers, **conf)
+
+    def start_request(self, server_conn, request_conn):
+        logger.info(server_conn)
+        logger.info(request_conn)
+        return super().start_request(server_conn, request_conn)
 
 
 class HTTPServer(httpserver.HTTPServer):
@@ -70,6 +83,10 @@ class HTTPServer(httpserver.HTTPServer):
         return super()._handle_connection(connection, address)
 
     def handle_stream(self, stream, address):
+        logger.info(stream)
+        return super().handle_stream(stream, address)
+
+    def __handle_stream(self, stream, address):
         socks = socket.socketpair()
         pid = os.fork()
         if pid:
@@ -98,7 +115,10 @@ def main():
     http_server = HTTPServer(application)
     http_server.bind(8889)
     http_server.start(1)
-    ioloop.IOLoop.instance().start()
+    try:
+        ioloop.IOLoop.instance().start()
+    except KeyboardInterrupt:
+        ioloop.IOLoop.instance().stop()
 
 
 if __name__ == '__main__':
