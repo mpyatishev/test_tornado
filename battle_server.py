@@ -41,13 +41,19 @@ class WebSocketHandler(websocket.WebSocketHandler):
         logger.info('Websocket opened')
         logger.info(self.request.connection)
         logger.info(self.stream)
-        logger.info(self.request.headers)
-        logger.info(self.get_cookie('sid'))
 
     def on_message(self, message):
         logger.info(self.on_message)
         logger.info(self.stream)
         self.write_message('your message: ' + message)
+
+        try:
+            message = json.loads(message)
+        except Exception as e:
+            logger.info(e)
+
+        if message and 'token' in message:
+            logger.info(message['token'])
 
     def on_close(self):
         logger.info('Websocket closed')

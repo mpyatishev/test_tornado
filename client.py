@@ -18,9 +18,9 @@ def handle_response(response):
     if response.error:
         logger.info(response.error)
     else:
-        body = json.dumps({'token': '1231234'})
         request = HTTPRequest('ws://127.0.0.1:8889/battle')
         ws = yield websocket_connect(request)
+        body = json.dumps({'token': '1231234'})
         ws.write_message(body)
         while True:
             message = yield ws.read_message()
