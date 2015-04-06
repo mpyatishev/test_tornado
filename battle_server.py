@@ -29,7 +29,6 @@ class Server(tcpserver.TCPServer):
     _pids = {}
 
     def handle_stream(self, stream, address):
-        logger.info('here')
         socks = socket.socketpair()
         pid = os.fork()
         if pid:
@@ -44,9 +43,13 @@ class Server(tcpserver.TCPServer):
             self.io_loop.add_callback(functools.partial(self.work, stream))
 
     @gen.coroutine
+    def socket_handler(self):
+        logger.info(self.socket_handler)
+
+    @gen.coroutine
     def waitpid(self, pid, fd, events):
-        logger.info('waiting %s' % pid)
         self.io_loop.remove_handler(fd)
+        logger.info('waiting %s' % pid)
         res = os.waitpid(pid, 0)
         logger.info('%s died' % pid)
         return res
@@ -129,10 +132,11 @@ class Server(tcpserver.TCPServer):
             elif message:
                 logger.info('child %s: %s' % (os.getpid(), message))
                 if message == 'exit':
+                    stream.close()
                     self.server_sock.sendmsg(['done'.encode()])
                     self.server_sock.close()
-                    stream.close()
                     self.io_loop.call_later(1, functools.partial(os._exit, os.EX_OK))
+                    logger.info('exiting...')
                     break
 
 

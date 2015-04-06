@@ -29,10 +29,10 @@ def handle_response(response=None):
         while True:
             message = yield ws.read_message()
             logger.info(message)
-            time.sleep(1)
+            # time.sleep(3)
             body = json.dumps('client') + '\r\n\r\n'
             ws.write_message(body)
-            time.sleep(1)
+            # time.sleep(3)
             body = json.dumps('exit') + '\r\n\r\n'
             ws.write_message(body)
             if message is None or True:
