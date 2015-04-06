@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import array
+import copy
 import functools
 import hashlib
 import json
@@ -14,85 +16,20 @@ import tornado
 from tornado import (
     gen,
     ioloop,
-    httpserver,
-    web,
-    websocket,
+    tcpserver,
 )
+
+from utils import send_msg, recv_msg
 
 logger = logging.getLogger(__name__)
 DIR_PREFIX = os.path.dirname(os.path.dirname(__file__))
-TEMPLATE_PATH = os.path.join(DIR_PREFIX, "templates")
-STATIC_PATH = os.path.join(DIR_PREFIX, "static")
 
 
-class BattleHandler(web.RequestHandler):
-    @web.asynchronous
-    @gen.coroutine
-    def get(self):
-        self.xsrf_token
-        logger.info('entered %s' % self)
-        time.sleep(5)
-        self.render('index.html')
-        logger.info('exiting %s' % self)
-
-
-class WebSocketHandler(websocket.WebSocketHandler):
-    def open(self):
-        logger.info('Websocket opened')
-        logger.info(self.request.connection)
-        logger.info(self.stream)
-
-    def on_message(self, message):
-        logger.info(self.on_message)
-        logger.info(self.stream)
-        self.write_message('your message: ' + message)
-
-        try:
-            message = json.loads(message)
-        except Exception as e:
-            logger.info(e)
-
-        if message and 'token' in message:
-            logger.info(message['token'])
-
-    def on_close(self):
-        logger.info('Websocket closed')
-
-
-class Application(web.Application):
-    def __init__(self):
-        handlers = [
-            (r'/', BattleHandler),
-            (r'/battle', WebSocketHandler),
-        ]
-        conf = dict(
-            template_path=TEMPLATE_PATH,
-            static_path=STATIC_PATH,
-            autoescape=True,
-            debug=True,
-            autoreload=False,
-        )
-
-        web.Application.__init__(self, handlers, **conf)
-
-    def start_request(self, server_conn, request_conn):
-        logger.info(server_conn)
-        logger.info(request_conn)
-        return super().start_request(server_conn, request_conn)
-
-
-class HTTPServer(httpserver.HTTPServer):
+class Server(tcpserver.TCPServer):
     _pids = {}
 
-    def _handle_connection(self, connection, address):
-        logger.info('%s %s' % (connection, address))
-        return super()._handle_connection(connection, address)
-
     def handle_stream(self, stream, address):
-        logger.info(stream)
-        return super().handle_stream(stream, address)
-
-    def __handle_stream(self, stream, address):
+        logger.info('here')
         socks = socket.socketpair()
         pid = os.fork()
         if pid:
@@ -103,24 +40,107 @@ class HTTPServer(httpserver.HTTPServer):
                                      ioloop.IOLoop.READ)
         else:
             socks[0].close()
-            super().handle_stream(stream, address)
-            socks[1].sendmsg(['done'.encode()])
-            logger.info('child died')
-            os._exit(os.EX_OK)
+            self.server_sock = socks[1]
+            self.io_loop.add_callback(functools.partial(self.work, stream))
 
     @gen.coroutine
     def waitpid(self, pid, fd, events):
-        logger.info(pid)
+        logger.info('waiting %s' % pid)
         self.io_loop.remove_handler(fd)
-        return os.waitpid(pid, 0)
+        res = os.waitpid(pid, 0)
+        logger.info('%s died' % pid)
+        return res
+
+    def send_stream(self):
+        sock, pid = self._pids.popitem()
+
+        self.send_sock(sock)
+        tmp_stream = copy.deepcopy(self.stream)
+
+        self._pids[sock] = pid
+
+    def send_sock(self, worker_sock):
+        sock = self.stream.fileno()
+        msg = {
+            'sock': True,
+            'family': sock.family,
+            'type': sock.type,
+            'proto': sock.proto,
+        }
+        fds = [sock.fileno()]
+        send_msg(worker_sock, msg, [(socket.SOL_SOCKET,
+                                     socket.SCM_RIGHTS, array.array("i", fds))])
+
+    def reader(self):
+        data, fds = recv_msg(self.server_sock)
+        for msg in data.decode().split("\r\n"):
+            if not msg:
+                continue
+            try:
+                msg = json.loads(msg)
+            except ValueError as e:
+                logger.info(e)
+                continue
+            if 'sock' in msg:
+                family = msg['family']
+                type = msg['type']
+                proto = msg['proto']
+                for fd in fds:
+                    sock = socket.fromfd(fd, family, type, proto)
+            else:
+                logger.info('worker %s received: %s' % (self.worker, msg))
+
+    def on_message(self, message):
+        # logger.info(self.on_message)
+        # logger.info(self.stream)
+        self.write_message('your message: ' + message)
+
+        try:
+            message = json.loads(message)
+        except Exception as e:
+            logger.info(e)
+
+        if message and 'token' in message:
+            logger.info(message['token'])
+            if not self._pids:
+                self.fork()
+            else:
+                self.send_stream()
+        elif message:
+            logger.info('child %s: %s' % (os.getpid(), message))
+            if message == 'exit':
+                self.stream.io_loop.call_later(1, functools.partial(os._exit, os.EX_OK))
+                self.serv_sock.sendmsg(['done'.encode()])
+
+    @gen.coroutine
+    def work(self, stream):
+        while True:
+            message = yield stream.read_until(delimiter='\r\n\r\n'.encode())
+            message = message.decode()
+
+            try:
+                message = json.loads(message)
+            except Exception as e:
+                logger.info(e)
+
+            if message and 'token' in message:
+                logger.info(message['token'])
+                yield stream.write(json.dumps('ok').encode())
+            elif message:
+                logger.info('child %s: %s' % (os.getpid(), message))
+                if message == 'exit':
+                    self.server_sock.sendmsg(['done'.encode()])
+                    self.server_sock.close()
+                    stream.close()
+                    self.io_loop.call_later(1, functools.partial(os._exit, os.EX_OK))
+                    break
 
 
 def main():
     tornado.log.enable_pretty_logging()
-    application = Application()
-    http_server = HTTPServer(application)
-    http_server.bind(8889)
-    http_server.start(1)
+    server = Server()
+    server.bind(8890)
+    server.start(1)
     try:
         ioloop.IOLoop.instance().start()
     except KeyboardInterrupt:
