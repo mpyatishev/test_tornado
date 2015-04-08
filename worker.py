@@ -147,6 +147,7 @@ class Worker:
                 proto = msg['proto']
                 for fd in fds:
                     sock = socket.fromfd(fd, family, type, proto)
+                    sock.setblocking(False)
                     self.socks.append(sock)
                     self.clients.append(sock.getpeername())
                     game = Game(self, sock)

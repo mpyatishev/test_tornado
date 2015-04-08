@@ -13,7 +13,7 @@ from tornado.websocket import websocket_connect
 
 logger = logging.getLogger(__name__)
 loop = ioloop.IOLoop.instance()
-max_clients = 10
+max_clients = 1000
 
 
 @gen.coroutine
@@ -28,9 +28,9 @@ def make_response():
     logger.info(message)
     body = json.dumps('client') + '\r\n'
     ws.write_message(body)
+    yield gen.sleep(3)
     body = json.dumps('exit') + '\r\n'
     ws.write_message(body)
-    yield gen.sleep(1)
     ws.close()
 
 

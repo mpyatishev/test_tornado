@@ -27,21 +27,27 @@ logger = logging.getLogger(__name__)
 
 
 class Server(tcpserver.TCPServer):
-    max_clients = 10
+    max_clients = 100
     workers = []
     clients_to_workers = {}
     socks_to_workers = {}
     pids_to_workers = {}
+    streams = {}
 
     def handle_stream(self, stream, address):
-        self.stream = stream
-        self.io_loop.add_handler(stream.socket, self.data_received,
-                                 ioloop.IOLoop.READ | ioloop.IOLoop.ERROR)
+        self.streams[stream.socket.fileno()] = stream
+        self.io_loop.add_handler(stream.socket, self.data_received, ioloop.IOLoop.READ)
+        logger.info('connected: %s' % stream.socket)
 
     @gen.coroutine
     def data_received(self, socket, events):
+        if socket.fileno() < 0:
+            return
+
+        stream = self.streams[socket.fileno()]
         self.io_loop.remove_handler(socket)
 
+        logger.info('data from: %s' % socket)
         if events & ioloop.IOLoop.ERROR:
             logger.info('server: client disconnected')
         else:
@@ -61,13 +67,13 @@ class Server(tcpserver.TCPServer):
                     worker = self.get_worker()
                     command = {'queue': message['token']}
                     self.send_msg(worker, command)
-                    self.send_sock(worker)
+                    self.send_sock(worker, socket)
                     client = socket.getpeername()
                     self.clients_to_workers[client] = worker
                 else:
                     logger.info(message)
 
-        self.stream.close()
+        stream.close()
         socket.close()
 
     def get_worker(self):
@@ -109,8 +115,7 @@ class Server(tcpserver.TCPServer):
         worker_sock = self.socks_to_workers[worker]
         send_msg(worker_sock, msg)
 
-    def send_sock(self, worker):
-        sock = self.stream.socket
+    def send_sock(self, worker, sock):
         # logger.info(sock)
         msg = {
             'sock': True,
